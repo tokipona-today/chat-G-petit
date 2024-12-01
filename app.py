@@ -2,72 +2,116 @@ import streamlit as st
 from collections import defaultdict
 import random
 import pandas as pd
-
+import re
 
 class SimpleLLM:
     def __init__(self):
-        self.transitions = defaultdict(list)
+        # Dictionnaire de dictionnaires pour stocker les fréquences de transition
+        self.transitions = defaultdict(lambda: defaultdict(int))
         self.vocabulary = set()
-        self.starts = []  # Pour stocker les débuts de phrases
+        self.starts = defaultdict(int)  # Fréquences des débuts de phrases
 
-    def train(self, text):
-        # Séparer le texte en phrases
-        phrases = text.lower().replace('\n', ' ').split('.')
-        phrases = [p.strip() for p in phrases if p.strip()]
+    def clean_word(self, word):
+        """Nettoie un mot en enlevant les nombres, la ponctuation et les tirets"""
+        # Enlève les nombres et les ponctuations sauf les apostrophes
+        word = re.sub(r'[0-9]', '', word)
+        word = re.sub(r'[^\w\'\s]', '', word)
+        word = word.replace('-', ' ')
+        # Gestion des apostrophes (les garder seulement si elles font partie d'un mot)
+        word = re.sub(r'\s+', ' ', word)
+        return word.strip().lower()
 
-        # Traitement des phrases
+    def clean_text(self, text):
+        """Nettoie le texte et le découpe en phrases"""
+        # Remplacer les points de suspension par un point
+        text = re.sub(r'\.{2,}', '.', text)
+        # Ajouter un espace après les points pour bien séparer les phrases
+        text = re.sub(r'\.([A-ZÀ-Ž])', r'. \1', text)
+        # Séparer en phrases
+        phrases = re.split(r'[.!?]+', text)
+        # Nettoyer chaque phrase
+        cleaned_phrases = []
         for phrase in phrases:
             words = phrase.strip().split()
-            if not words:  # Ignorer les phrases vides
+            if not words:
+                continue
+            # Nettoyer chaque mot
+            cleaned_words = [self.clean_word(word) for word in words]
+            # Filtrer les mots vides
+            cleaned_words = [w for w in cleaned_words if w and len(w) > 1]
+            if cleaned_words:
+                cleaned_phrases.append(cleaned_words)
+        return cleaned_phrases
+
+    def train(self, text):
+        # Nettoyer et séparer le texte en phrases
+        cleaned_phrases = self.clean_text(text)
+
+        # Traitement des phrases
+        for words in cleaned_phrases:
+            if not words:
                 continue
 
-            # Stocker le premier mot comme possible début de phrase
-            self.starts.append(words[0])
+            # Stocker le premier mot comme début de phrase
+            self.starts[words[0]] += 1
 
-            # Ajouter les mots au vocabulaire existant
+            # Ajouter les mots au vocabulaire
             self.vocabulary.update(words)
 
             # Construire les transitions
             for i in range(len(words) - 1):
                 current_word = words[i]
                 next_word = words[i + 1]
-                self.transitions[current_word].append(next_word)
+                self.transitions[current_word][next_word] += 1
 
-        # Afficher les statistiques dans la sidebar
-        st.sidebar.write(f"Nombre de phrases apprises : {len(phrases)}")
+        # Afficher les statistiques
+        st.sidebar.write(f"Nombre de phrases apprises : {len(cleaned_phrases)}")
+
+    def select_weighted(self, frequency_dict):
+        """Sélectionne un mot en fonction de ses fréquences"""
+        words = list(frequency_dict.keys())
+        weights = list(frequency_dict.values())
+        total = sum(weights)
+        probabilities = [w/total for w in weights]
+        return random.choices(words, probabilities)[0]
 
     def predict_next(self, word):
-        word = word.lower()
+        word = self.clean_word(word)
         if word in self.transitions:
-            prediction = random.choice(self.transitions[word])
-            suivants = sorted(list(set(self.transitions[word])))
+            prediction = self.select_weighted(self.transitions[word])
+            suivants = [(w, f) for w, f in self.transitions[word].items()]
+            suivants = sorted(suivants, key=lambda x: x[1], reverse=True)
             return prediction, suivants
         return "Je ne connais pas ce mot...", []
 
     def generate_sentence(self, theme_word):
-        if theme_word.lower() not in self.vocabulary:
+        theme_word = self.clean_word(theme_word)
+        if theme_word not in self.vocabulary:
             return "Je ne connais pas ce mot..."
 
-        sentence = [random.choice(self.starts)]
-        max_length = 15  # Éviter les phrases trop longues
+        sentence = [self.select_weighted(self.starts)]
+        max_length = 15
         theme_used = False
 
         while len(sentence) < max_length:
             current_word = sentence[-1]
 
             if not theme_used and len(sentence) > 2:
-                sentence.append(theme_word.lower())
+                sentence.append(theme_word)
                 theme_used = True
                 continue
 
-            if current_word not in self.transitions or current_word.endswith('.'):
+            if current_word not in self.transitions:
                 break
 
-            next_word = random.choice(self.transitions[current_word])
+            next_word = self.select_weighted(self.transitions[current_word])
             sentence.append(next_word)
 
+            if not self.transitions[next_word]:
+                break
+
         if not theme_used:
-            sentence.insert(random.randint(1, len(sentence)), theme_word.lower())
+            sentence.insert(random.randint(1, len(sentence)), theme_word)
 
         return ' '.join(sentence).capitalize() + '.'
 
@@ -94,7 +138,7 @@ def chat_demo():
             input_container = st.container()
 
             with chat_container:
-                # Ne garder que les derniers messages (2 messages par échange)
+                # Ne garder que les derniers messages
                 start_idx = max(0, len(st.session_state.messages) - (MAX_EXCHANGES * 2))
                 recent_messages = st.session_state.messages[start_idx:]
 
@@ -120,7 +164,8 @@ def chat_demo():
         with col2:
             if st.session_state.current_possibilities:
                 st.markdown("### Mots possibles")
-                df = pd.DataFrame(st.session_state.current_possibilities, columns=['Mots suivants'])
+                df = pd.DataFrame(st.session_state.current_possibilities,
+                                  columns=['Mot suivant', 'Fréquence'])
                 st.dataframe(df, hide_index=True)
 
 
