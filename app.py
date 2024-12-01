@@ -4,43 +4,41 @@ import random
 import pandas as pd
 import re
 
+
 class SimpleLLM:
     def __init__(self):
-        # Dictionnaire de dictionnaires pour stocker les fréquences de transition
         self.transitions = defaultdict(lambda: defaultdict(int))
         self.vocabulary = set()
-        self.starts = defaultdict(int)  # Fréquences des débuts de phrases
+        self.starts = defaultdict(int)
 
     def clean_word(self, word):
-        """Nettoie un mot en enlevant les nombres, la ponctuation et les tirets"""
-        # Enlève les nombres et les ponctuations sauf les apostrophes
+        """Nettoie un mot en gardant intactes les apostrophes"""
+        # Enlève uniquement les nombres et la ponctuation (sauf apostrophes)
+        # et les tirets qui ne font pas partie d'un mot
         word = re.sub(r'[0-9]', '', word)
-        word = re.sub(r'[^\w\'\s]', '', word)
-        word = word.replace('-', ' ')
-        # Gestion des apostrophes (les garder seulement si elles font partie d'un mot)
-        word = re.sub(r'\s+', ' ', word)
-        return word.strip().lower()
+        word = re.sub(r'[!?,.:;"]', '', word)
+        return word.lower()
 
     def clean_text(self, text):
         """Nettoie le texte et le découpe en phrases"""
-        # Remplacer les points de suspension par un point
-        text = re.sub(r'\.{2,}', '.', text)
-        # Ajouter un espace après les points pour bien séparer les phrases
-        text = re.sub(r'\.([A-ZÀ-Ž])', r'. \1', text)
-        # Séparer en phrases
-        phrases = re.split(r'[.!?]+', text)
+        # Séparer en phrases (uniquement sur les points)
+        phrases = re.split(r'\.', text)
+
         # Nettoyer chaque phrase
         cleaned_phrases = []
         for phrase in phrases:
+            # Split en gardant les apostrophes
             words = phrase.strip().split()
             if not words:
                 continue
+
             # Nettoyer chaque mot
             cleaned_words = [self.clean_word(word) for word in words]
-            # Filtrer les mots vides
-            cleaned_words = [w for w in cleaned_words if w and len(w) > 1]
+            cleaned_words = [w for w in cleaned_words if w]
+
             if cleaned_words:
                 cleaned_phrases.append(cleaned_words)
+
         return cleaned_phrases
 
     def train(self, text):
